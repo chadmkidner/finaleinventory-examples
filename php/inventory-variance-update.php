@@ -1,4 +1,3 @@
-#!/usr/bin/php
 <?php
 
 // This example shows updating stock levels in Finale 
@@ -12,16 +11,15 @@
 // Replace these variables with appropriate values for your company and user accounts
 $host = "https://app.finaleinventory.com";
 $authPath = "/demo/api/auth";
-$username = "test";
-$password = "finale";
+$username = "user";
+$password = "pass";
 
 // Inventory variance always applies to a single sublocation (demo data - replace with sublocation in your account)
-$sublocationName = "M0";
+$sublocationName = "LO";
 
 // Map from supplier product id to new stock level for each product id (demo data, should match supplier product id values in your account)
-$stockLevelUpdate = array("71352" => 19, "2x" => 12);
+//$stockLevelUpdate = array("101300" => 12);
     
-
 require('./auth.php');
 
 function finale_fetch_resource($auth, $resource) {
@@ -82,7 +80,7 @@ $inventory_variance_body = array(
     "statusId" => "PHSCL_INV_COMMITTED",
     "sessionSecret" => $auth['session_secret']
 );
-
+/*
 // The inventoryItemVarianceList has one entry for each item to change 
 //   - quantityOnHandVar is difference from previous value (there is no way to just specify the new value)
 //   - productUrl must be specified
@@ -90,6 +88,7 @@ $inventory_variance_body = array(
 foreach($stockLevelUpdate as $supplierProductId => $quantityOnHand) {
     $productUrl = $supplierProductIdLookup[$supplierProductId];
     $quantityOnHandVar = $quantityOnHand - $quantityLookup[$facilityUrl][$productUrl];
+	var_dump($quantityLookup[$facilityUrl][$productUrl]);
     if ($quantityOnHandVar) {
         $inventory_variance_body["inventoryItemVarianceList"][] = array( 
             "quantityOnHandVar" => $quantityOnHandVar,
@@ -98,6 +97,36 @@ foreach($stockLevelUpdate as $supplierProductId => $quantityOnHand) {
         );
     }
 }
+*/
+
+//LO File Import /C/K
+$lo_file = fopen("veil-imp/lo_stock.txt","r");
+$limitTo = 2000;
+$i = 0;
+while(!feof($lo_file)){
+  
+    $data = fgetcsv($lo_file, $limitTo, "\t");
+    $loProductId = $data[0];
+    $loQuantityOnHand = $data[1];
+    
+    $productUrl = $supplierProductIdLookup[$loProductId];
+    $quantityOnHandVar = $loQuantityOnHand - $quantityLookup[$facilityUrl][$productUrl];
+    if ($quantityOnHandVar and ($i < $limitTo) and ($productUrl !== null)) {
+      $inventory_variance_body["inventoryItemVarianceList"][$i++] = array( 
+            "quantityOnHandVar" => $quantityOnHandVar,
+            "productUrl" => $productUrl, 
+            "facilityUrl" => $facilityUrl 
+        );
+    }
+	if ($productUrl !== null)
+	{
+		var_dump($data[0]);
+	}
+	unset($productUrl);
+	unset($quantityOnHandVar);
+  fclose($handle);
+}
+//C/K
 
 
 if (count($inventory_variance_body["inventoryItemVarianceList"])) {
@@ -113,10 +142,8 @@ if (count($inventory_variance_body["inventoryItemVarianceList"])) {
     $inventory_variance_create_response = json_decode($result);
 
     echo "Create inventory variance success count=".count($inventory_variance_create_response->inventoryItemVarianceList)."\n";
-
+	//var_dump($inventory_variance_create_response->inventoryItemVarianceList);
 } else {
     echo "Do not create inventory variance since there are no quantity changes\n";
 }
-  
 ?>
-
