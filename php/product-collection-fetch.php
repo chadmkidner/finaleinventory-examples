@@ -5,9 +5,9 @@ require('./auth.php');
 
 // Replace these variables with appropriate values for your company and user accounts
 $host = "https://app.finaleinventory.com";
-$authPath = "/demo/api/auth";
-$username = "test";
-$password = "finale";
+$authPath = "/veilep/api/auth";
+$username = "shipping";
+$password = "117d7628057b";
 
 $auth = finale_auth($host, $authPath, $username, $password);
 
