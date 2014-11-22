@@ -15,7 +15,7 @@ $username = "test";
 $password = "finale";
 
 // Inventory variance always applies to a single sublocation (demo data - replace with sublocation in your account)
-#$sublocationName = "BSD";
+#$sublocationName = "M0";
 
 // Map from supplier product id to new stock level for each product id (demo data, should match supplier product id values in your account)
 #$stockLevelUpdate = array("71352" => 19, "2x" => 12);
@@ -42,7 +42,6 @@ foreach($facilityResp->facilityUrl as $idx => $facilityUrl) {
     $facilityNameLookup[$facilityResp->facilityName[$idx]] = $facilityUrl;
 }
 echo "Fetch facility resource length=".count($facilityResp->facilityUrl)."\n";
-
 // Fetch product response and create index from supplier id to product url
 $productResp = finale_fetch_resource($auth, 'resourceProduct');
 foreach($productResp->productUrl as $idx => $productUrl) {
@@ -53,7 +52,6 @@ foreach($productResp->productUrl as $idx => $productUrl) {
     }
 }
 echo "Fetch product resource length=".count($productResp->productUrl)."\n";
-
 // Fetch inventory response and create index from facilityUrl and productUrl to quantity on hand
 //   - filter out any items with lots and packing to make things simpler
 //   - it is possible for facilityUrl and productUrl pairs to appear multiple times so need to add them together
@@ -65,83 +63,66 @@ foreach($iiResp->facilityUrl as $idx => $facilityUrl) {
 }
 echo "Fetch inventory item resource length=".count($iiResp->facilityUrl)."\n";
 
+
+/* Begin of BSD - Feed from simple http CSV file */
+
 // The inventory variance needs the facilityUrl which we lookup based on the sublocation name
-$facilityUrl = $facilityNameLookup["BSD"];
 #$facilityUrl = $facilityNameLookup[$sublocationName];
+$facilityUrl = $facilityNameLookup["BSD"];
 
 // The body of the inventory variance has a few required fields:
-//   - facilityUrl to be updated
-//   - type which is "FACILITY" for a batch stock change and "FACILITY_COUNT" for a stock take
-//   - statusId which is "PHSCL_INV_COMMITTED" the committed status and "PHSCL_INV_INPUT" for the editable/draft state
-//   - sessionSecret for CSRF handling (not actually relevant for API calls from server but required since API is shared with browser)
+// - facilityUrl to be updated
+// - type which is "FACILITY" for a batch stock change and "FACILITY_COUNT" for a stock take
+// - statusId which is "PHSCL_INV_COMMITTED" the committed status and "PHSCL_INV_INPUT" for the editable/draft state
+// - sessionSecret for CSRF handling (not actually relevant for API calls from server but required since API is shared with browser)
 $inventory_variance_body = array(
-    "facilityUrl" => $facilityUrl, 
-    "physicalInventoryTypeId" => "FACILITY", 
+    "facilityUrl" => $facilityUrl,
+    "physicalInventoryTypeId" => "FACILITY",
     "statusId" => "PHSCL_INV_COMMITTED",
     "sessionSecret" => $auth['session_secret']
 );
-
-// The inventoryItemVarianceList has one entry for each item to change 
-//   - quantityOnHandVar is difference from previous value (there is no way to just specify the new value)
-//   - productUrl must be specified
-//   - facilityUrl for each item must match facilityUrl for inventory variance as a whole
-#foreach($stockLevelUpdate as $supplierProductId => $quantityOnHand) {
-#    $productUrl = $supplierProductIdLookup[$supplierProductId];
-#    $quantityOnHandVar = $quantityOnHand - $quantityLookup[$facilityUrl][$productUrl];
-#	var_dump($quantityLookup[$facilityUrl][$productUrl]);
-#    if ($quantityOnHandVar) {
-#        $inventory_variance_body["inventoryItemVarianceList"][] = array( 
-#            "quantityOnHandVar" => $quantityOnHandVar,
-#            "productUrl" => $productUrl, 
-#            "facilityUrl" => $facilityUrl 
-#        );
-#    }
-#}
 
 $bsdFile = fopen("https://www.buyseasonsdirect.com/resources/inventoryfeed.csv","r");
 $i = 0;
 while(!feof($bsdFile)){
 	$line = fgetcsv($bsdFile);
 	$productUrl = $supplierProductIdLookup[$line[0]];
-   $quantityOnHandVar = $line[1] - $quantityLookup[$facilityUrl][$productUrl];
-    if ($quantityOnHandVar and ($i < 2000) and ($productUrl !== null)) {
-        $inventory_variance_body["inventoryItemVarianceList"][$i++] = array( 
-            "quantityOnHandVar" => $quantityOnHandVar,
-            "productUrl" => $productUrl, 
-            "facilityUrl" => $facilityUrl 
-        );
-    }
-//	//if ($productUrl !== null)
-//	//{
-//	//	var_dump($line[0]);
-//	//}
+  $quantityOnHandVar = $line[1] - $quantityLookup[$facilityUrl][$productUrl];
+  if ($quantityOnHandVar and ($i < 2000) and ($productUrl !== null)) { // Limiting query to 2000 per location per run
+    $inventory_variance_body["inventoryItemVarianceList"][$i++] = array( 
+      "quantityOnHandVar" => $quantityOnHandVar,
+      "productUrl" => $productUrl, 
+      "facilityUrl" => $facilityUrl 
+    );
+  }
+  //if ($productUrl !== null){
+  //var_dump($line[0]);
+  //}
 	unset($productUrl);
 	unset($quantityOnHandVar);
 }
 fclose($bsdFile);
 
 if (count($inventory_variance_body["inventoryItemVarianceList"])) {
-
-    // Post to the top level resource URL to create a new entity
-    curl_setopt($auth['curl_handle'], CURLOPT_URL, $auth['host'] . $auth['auth_response']->resourceInventoryVariance);
-    curl_setopt($auth['curl_handle'], CURLOPT_POST, true);
-    curl_setopt($auth['curl_handle'], CURLOPT_POSTFIELDS, json_encode($inventory_variance_body));
-    $result = curl_exec($auth['curl_handle']);
-      
-    $status_code = curl_getinfo($auth['curl_handle'], CURLINFO_HTTP_CODE);
-    if ($status_code != 200) exit("FAIL: inventory variance create error statusCode=$status_code result=$result\n");
-    $inventory_variance_create_response = json_decode($result);
-
-    echo "Create inventory variance success count=".count($inventory_variance_create_response->inventoryItemVarianceList)."\n";
+  // Post to the top level resource URL to create a new entity
+  curl_setopt($auth['curl_handle'], CURLOPT_URL, $auth['host'] . $auth['auth_response']->resourceInventoryVariance);
+  curl_setopt($auth['curl_handle'], CURLOPT_POST, true);
+  curl_setopt($auth['curl_handle'], CURLOPT_POSTFIELDS, json_encode($inventory_variance_body));
+  $result = curl_exec($auth['curl_handle']);
+    
+  $status_code = curl_getinfo($auth['curl_handle'], CURLINFO_HTTP_CODE);
+  if ($status_code != 200) exit("FAIL: inventory variance create error statusCode=$status_code result=$result\n");
+  $inventory_variance_create_response = json_decode($result);
+  echo "Create inventory variance success count=".count($inventory_variance_create_response->inventoryItemVarianceList)."\n";
 	#var_dump($inventory_variance_create_response->inventoryItemVarianceList);
 } else {
-    echo "Do not create inventory variance since there are no quantity changes\n";
+  echo "Not Creating Inventory Variance for BSD since there are no quantity changes\n";
 }
 
+
+/* Begin of EM - Feed from HTTPS CSV File with Authentication */
 unset($inventory_variance_body);
-
 $facilityUrl = $facilityNameLookup["EM"];
-
 $inventory_variance_body = array(
     "facilityUrl" => $facilityUrl, 
     "physicalInventoryTypeId" => "FACILITY", 
@@ -152,44 +133,43 @@ $inventory_variance_body = array(
 $emFile = fopen("https://beta:BetaTest@www.elegantmomentslingerie.com/feeds/v1/liveinventory.csv","r");
 fgetcsv($emFile);
 $i = 0;
-while(!feof($emFile))
-{
+while(!feof($emFile)){
 	$line = fgetcsv($emFile);
 	$productUrl = $supplierProductIdLookup[$line[0]];
-    $quantityOnHandVar = $line[6] - $quantityLookup[$facilityUrl][$productUrl];
-    if ($quantityOnHandVar and ($i < 2000) and ($productUrl !== null)) {
-        $inventory_variance_body["inventoryItemVarianceList"][$i++] = array( 
-            "quantityOnHandVar" => $quantityOnHandVar,
-            "productUrl" => $productUrl, 
-            "facilityUrl" => $facilityUrl 
-        );
-    }
+  $quantityOnHandVar = $line[6] - $quantityLookup[$facilityUrl][$productUrl];
+  if ($quantityOnHandVar and ($i < 2000) and ($productUrl !== null)) {
+    $inventory_variance_body["inventoryItemVarianceList"][$i++] = array( 
+      "quantityOnHandVar" => $quantityOnHandVar,
+      "productUrl" => $productUrl, 
+      "facilityUrl" => $facilityUrl 
+    );
+  }
 	unset($productUrl);
 	unset($quantityOnHandVar);
 }
 fclose($emFile);
 
 if (count($inventory_variance_body["inventoryItemVarianceList"])) {
-
     // Post to the top level resource URL to create a new entity
     curl_setopt($auth['curl_handle'], CURLOPT_URL, $auth['host'] . $auth['auth_response']->resourceInventoryVariance);
     curl_setopt($auth['curl_handle'], CURLOPT_POST, true);
     curl_setopt($auth['curl_handle'], CURLOPT_POSTFIELDS, json_encode($inventory_variance_body));
     $result = curl_exec($auth['curl_handle']);
-      
     $status_code = curl_getinfo($auth['curl_handle'], CURLINFO_HTTP_CODE);
     if ($status_code != 200) exit("FAIL: inventory variance create error statusCode=$status_code result=$result\n");
     $inventory_variance_create_response = json_decode($result);
-
     echo "EM inventory variance success count=".count($inventory_variance_create_response->inventoryItemVarianceList)."\n";
 } else {
-    echo "Do not create inventory variance since there are no quantity changes\n";
+    echo "Not Creating Inventory Variance for EM since there are no quantity changes\n";
 }
 
+
+/*  Begin of LO -  Feed provided on FTP in TXT File and Updated Daily */
+//  @TODO Only Update this file once per day. File has roughly 12,300 Skus.
+//  Easier way to check all 12K and update without processing every cron?
+
 unset($inventory_variance_body);
-
 $facilityUrl = $facilityNameLookup["LO"];
-
 $inventory_variance_body = array(
     "facilityUrl" => $facilityUrl, 
     "physicalInventoryTypeId" => "FACILITY", 
@@ -197,6 +177,7 @@ $inventory_variance_body = array(
     "sessionSecret" => $auth['session_secret']
 );
 
+// Supplier FTP Connection Info
 $ftp_server = "50.243.9.241";
 $ftp_conn = ftp_connect($ftp_server) or die("Could not connect to $ftp_server");
 $login = ftp_login($ftp_conn,"veil","mprf$9sz");
@@ -206,48 +187,39 @@ $loFile = fopen("veil.txt","r");
 fgetcsv($loFile,0,"\t");
 $products = array();
 $duplicates = array();
-while(!feof($loFile))
-{
+
+while(!feof($loFile)){
 	$line = fgetcsv($loFile,0,"\t");
-	if ($products[$line[0]])
-	{
-		if($duplicates[$line[0]])
-		{
+	if ($products[$line[0]]){
+		if($duplicates[$line[0]]){
 			$duplicates[$line[0]]++;
-		}
-		else
-		{
+		} else {
 			$duplicates[$line[0]] = 1;
 		}
-	}
-	else
-	{
-		$products[$line[0]] = 1;
+	} else {
+	  $products[$line[0]] = 1;
 	}
 }
 rewind($loFile);
-
 fgetcsv($loFile,0,"\t");
 $i = 0;
-while(!feof($loFile))
-{
+while(!feof($loFile)){
 	$line = fgetcsv($loFile,0,"\t");
 	$productUrl = $supplierProductIdLookup[$line[0]];
-    $quantityOnHandVar = $line[1] - $quantityLookup[$facilityUrl][$productUrl];
-    if ($quantityOnHandVar and ($i < 2000) and ($productUrl !== null) and (!$duplicates[$line[0]])) {
-        $inventory_variance_body["inventoryItemVarianceList"][$i++] = array( 
-            "quantityOnHandVar" => $quantityOnHandVar,
-            "productUrl" => $productUrl, 
-            "facilityUrl" => $facilityUrl 
-        );
-    }
+  $quantityOnHandVar = $line[1] - $quantityLookup[$facilityUrl][$productUrl];
+  if ($quantityOnHandVar and ($i < 2000) and ($productUrl !== null) and (!$duplicates[$line[0]])) {
+    $inventory_variance_body["inventoryItemVarianceList"][$i++] = array( 
+      "quantityOnHandVar" => $quantityOnHandVar,
+      "productUrl" => $productUrl, 
+      "facilityUrl" => $facilityUrl 
+    );
+  }
 	unset($productUrl);
 	unset($quantityOnHandVar);
 }
 fclose($loFile);
 
 if (count($inventory_variance_body["inventoryItemVarianceList"])) {
-
     // Post to the top level resource URL to create a new entity
     curl_setopt($auth['curl_handle'], CURLOPT_URL, $auth['host'] . $auth['auth_response']->resourceInventoryVariance);
     curl_setopt($auth['curl_handle'], CURLOPT_POST, true);
@@ -260,15 +232,17 @@ if (count($inventory_variance_body["inventoryItemVarianceList"])) {
 
     echo "LO inventory variance success count=".count($inventory_variance_create_response->inventoryItemVarianceList)."\n";
 } else {
-    echo "Do not create inventory variance since there are no quantity changes\n";
+  echo "Not Creating Inventory Variance for LO since there are no quantity changes\n";
 }
 
-for ($x=1; $x<=24; $x++)
-{
+
+/* Begin of MO - XML Feed, separated into 1000 lines per file.
+// NOTE: Values have been changed to Zero for this vendor temporarily because of shipping problems. Will use again, likely when better ordering is figured out.
+
+// unset $inventory_variance_body and redefine for each new file
+for ($x=1; $x<=24; $x++){
 	unset($inventory_variance_body);
-
-	$facilityUrl = $facilityNameLookup["MO"];
-
+  $facilityUrl = $facilityNameLookup["MO"];
 	$inventory_variance_body = array(
 		"facilityUrl" => $facilityUrl, 
 		"physicalInventoryTypeId" => "FACILITY", 
@@ -276,7 +250,6 @@ for ($x=1; $x<=24; $x++)
 		"sessionSecret" => $auth['session_secret']
 	);
 
-	/*nuking morris because of late shipping problems*/
 	$xml=simplexml_load_file("http://morris.morriscostumes.com/out/available_batchnynyy_".str_pad($x,3,'0',STR_PAD_LEFT).".xml");
 	foreach($xml->Available as $available)	{
 		$productUrl = $supplierProductIdLookup[(string)$available->Part];
@@ -293,7 +266,6 @@ for ($x=1; $x<=24; $x++)
 	}
 	
 	if (count($inventory_variance_body["inventoryItemVarianceList"])) {
-
 		// Post to the top level resource URL to create a new entity
 		curl_setopt($auth['curl_handle'], CURLOPT_URL, $auth['host'] . $auth['auth_response']->resourceInventoryVariance);
 		curl_setopt($auth['curl_handle'], CURLOPT_POST, true);
@@ -306,13 +278,15 @@ for ($x=1; $x<=24; $x++)
 
 		echo "MO".$x." inventory variance success count=".count($inventory_variance_create_response->inventoryItemVarianceList)."\n";
 	} else {
-		echo "Do not create inventory variance since there are no quantity changes\n";
+		echo "Not Creating Inventory Variance for MO since there are no quantity changes\n";
 	}
 }
+// END OF MO */
+
+
+/* Start of BW - XLS Feed on http, requires PHPEXCEL CLASSES to be included (in separate folder) */
 unset($inventory_variance_body);
-
 $facilityUrl = $facilityNameLookup["BW"];
-
 $inventory_variance_body = array(
     "facilityUrl" => $facilityUrl, 
     "physicalInventoryTypeId" => "FACILITY", 
@@ -321,7 +295,6 @@ $inventory_variance_body = array(
 );
 
 file_put_contents("Bewicked_stock.xls",fopen("http://www.bewickedcostumes.com/download/Bewicked_stock.xls","r"));
-
 include 'C:\php\Classes\PHPExcel.php';
 $fileType = PHPExcel_IOFactory::identify("Bewicked_stock.xls");
 $objReader = PHPExcel_IOFactory::createReader($fileType);
@@ -330,35 +303,32 @@ $objPHPExcel = $objReader->load("Bewicked_stock.xls");
 $sheetData = $objPHPExcel->getActiveSheet()->toArray(null,true,true,false);
 
 $i = 0;
-foreach($sheetData as $row)
-{
+foreach($sheetData as $row){
 	$productUrl = $supplierProductIdLookup[$row[0]];
-    $quantityOnHandVar = $row[10] - $quantityLookup[$facilityUrl][$productUrl];
-    if ($quantityOnHandVar and ($i < 2000) and ($productUrl !== null)) {
-        $inventory_variance_body["inventoryItemVarianceList"][$i++] = array( 
-            "quantityOnHandVar" => $quantityOnHandVar,
-            "productUrl" => $productUrl, 
-            "facilityUrl" => $facilityUrl 
-        );
-    }
+  $quantityOnHandVar = $row[10] - $quantityLookup[$facilityUrl][$productUrl];
+  if ($quantityOnHandVar and ($i < 2000) and ($productUrl !== null)) {
+    $inventory_variance_body["inventoryItemVarianceList"][$i++] = array( 
+      "quantityOnHandVar" => $quantityOnHandVar,
+      "productUrl" => $productUrl, 
+      "facilityUrl" => $facilityUrl 
+    );
+  }
 	unset($productUrl);
 	unset($quantityOnHandVar);
 }
 
 if (count($inventory_variance_body["inventoryItemVarianceList"])) {
-
     // Post to the top level resource URL to create a new entity
     curl_setopt($auth['curl_handle'], CURLOPT_URL, $auth['host'] . $auth['auth_response']->resourceInventoryVariance);
     curl_setopt($auth['curl_handle'], CURLOPT_POST, true);
     curl_setopt($auth['curl_handle'], CURLOPT_POSTFIELDS, json_encode($inventory_variance_body));
-    $result = curl_exec($auth['curl_handle']);
-      
+    $result = curl_exec($auth['curl_handle']);    
     $status_code = curl_getinfo($auth['curl_handle'], CURLINFO_HTTP_CODE);
     if ($status_code != 200) exit("FAIL: inventory variance create error statusCode=$status_code result=$result\n");
     $inventory_variance_create_response = json_decode($result);
 
     echo "BW inventory variance success count=".count($inventory_variance_create_response->inventoryItemVarianceList)."\n";
 } else {
-    echo "Do not create inventory variance since there are no quantity changes\n";
+    echo "Not Creating Inventory Variance for BW since there are no quantity changes\n";
 }
 ?>
